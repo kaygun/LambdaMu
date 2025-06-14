@@ -1,0 +1,5 @@
+let zero = (\f.\x. x)
+let S = (\n.\f.\x. f (n f x))
+let add = (\n.\m.\f.\x. n f (m f x))
+let mul = (\n.\m.\f. n (m f))
+let DNE = (λx. μa.[a] (x (λb.[a]b)))
