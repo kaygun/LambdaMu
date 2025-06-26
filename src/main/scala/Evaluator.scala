@@ -35,37 +35,32 @@ object Evaluator:
     case Expr.Mu(a, u)       => if a == beta then expr else Expr.Mu(a, app(beta, v, u))
     case _                   => expr
 
-  def reduce0(expr: Expr): (Expr, Boolean) = expr match
+  private def reduceInternal(expr: Expr): (Expr, Boolean) = expr match
     case Expr.Freeze(a1, Expr.Freeze(a2, e2)) if a1 == a2 => (Expr.Freeze(a1, e2), true)
     case Expr.App(Expr.Lam(x, u), v)                      => (subst(x, v, u), true)
     case Expr.App(Expr.Mu(b, u), v)                       => (Expr.Mu(b, app(b, v, u)), true)
     case Expr.Freeze(a, Expr.Mu(b, u))                    => (rename(b, a, u), true)
     case Expr.Mu(a, Expr.Freeze(b, e)) if a == b          => (e, true)
+    case Expr.Lam(x, b)                                   => val (rb, c) = reduceInternal(b); (Expr.Lam(x, rb), c)
+    case Expr.App(f, a)                                   =>
+      val (rf, c1) = reduceInternal(f)
+      val (ra, c2) = reduceInternal(a)
+      (Expr.App(rf, ra), c1 || c2)
+    case Expr.Freeze(a, w)                                => val (rw, c) = reduceInternal(w); (Expr.Freeze(a, rw), c)
+    case Expr.Mu(a, u)                                    => val (ru, c) = reduceInternal(u); (Expr.Mu(a, ru), c)
     case _                                                => (expr, false)
-
-  def reduce1(expr: Expr): (Expr, Boolean) =
-    val reducedExpr = expr match
-      case Expr.Lam(x, b)      => val (rb, c1) = reduce1(b); (Expr.Lam(x, rb), c1)
-      case Expr.App(f, a)      => val (rf, c1) = reduce1(f); val (ra, c2) = reduce1(a); (Expr.App(rf, ra), c1 || c2)
-      case Expr.Freeze(a, w)   => val (rw, c1) = reduce1(w); (Expr.Freeze(a, rw), c1)
-      case Expr.Mu(a, u)       => val (ru, c1) = reduce1(u); (Expr.Mu(a, ru), c1)
-      case _                   => (expr, false)
-    val (e2, c2) = reduce0(reducedExpr._1)
-    (e2, reducedExpr._2 || c2)
-
-  @annotation.tailrec
-  def reduce(expr: Expr): Expr =
-    val (e, changed) = reduce1(expr)
-    if changed then reduce(e) else e
 
   def evalSteps(expr: Expr): List[Expr] =
     val buf = mutable.ListBuffer(expr)
     var curr = expr
     var changed = true
     while changed do
-      val (next, c) = reduce1(curr)
+      val (next, c) = reduceInternal(curr)
       if c then buf += next
       curr = next
       changed = c
     buf.toList
+
+  def reduceOnce(expr: Expr): Expr = evalSteps(expr).lift(1).getOrElse(expr)
+  def eval(expr: Expr): Expr = evalSteps(expr).last
 
