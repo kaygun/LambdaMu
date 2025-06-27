@@ -60,7 +60,3 @@ object Evaluator:
       curr = next
       changed = c
     buf.toList
-
-  def reduceOnce(expr: Expr): Expr = evalSteps(expr).lift(1).getOrElse(expr)
-  def eval(expr: Expr): Expr = evalSteps(expr).last
-

@@ -17,7 +17,7 @@ object Repl:
           try
             val expr = Parser.parse(rhs)
             Evaluator.env(name) = Evaluator.resolve(expr)
-            println(s"Defined $name.")
+            println(s"let $name = ${PrettyPrinter.pretty(Evaluator.env(name))}")
           catch case ex: Exception => println(s"Definition error: ${ex.getMessage}")
         else println("Error: malformed let statement.")
       else if line.startsWith("load \"") && line.endsWith("\"") then
