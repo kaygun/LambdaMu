@@ -1,17 +1,38 @@
-package lambdamu
-
-import lambdamu.Expr
+// === Parser ===
 import scala.util.parsing.combinator.JavaTokenParsers
 
-object Parser extends JavaTokenParsers:
-    def identifier: Parser[String] = "[a-zA-Z_]\\w*".r
-    def lam: Parser[Expr]          = ("\\" | "λ") ~> identifier ~ ("." ~> expr) ^^ { case x ~ e => Expr.Lam(x, e) }
-    def mu: Parser[Expr]           = ("mu" | "μ") ~> identifier ~ ("." ~> expr) ^^ { case a ~ e => Expr.Mu(a, e) }
-    def freeze: Parser[Expr]       = ("[" ~> identifier <~ "]") ~ expr ^^ { case a ~ e => Expr.Freeze(a, e) }
-    def variable: Parser[Expr]     = identifier ^^ Expr.Var.apply
-    def term: Parser[Expr]         = lam | mu | freeze | variable | "(" ~> expr <~ ")"
-    def app: Parser[Expr]          = term ~ rep(term) ^^ { case t ~ ts => ts.foldLeft(t)(Expr.App.apply)  }
-    def expr: Parser[Expr]         = app
-    def parse(input: String): Expr = parseAll(expr, input).getOrElse(throw new IllegalArgumentException("Parse error"))
+object LambdaParser extends JavaTokenParsers:
+  def variable: Parser[Var] = ident ^^ Var.apply
+  def lambda: Parser[Expr] = ("\\" | "λ") ~> ident ~ "." ~ expr ^^ { case p ~ _ ~ b => Lam(Var(p), b) }
+  def mu: Parser[Expr] = ("#" | "μ") ~> ident ~ "." ~ expr ^^ { case p ~ _ ~ b => Mu(Var(p), b) }
+  def cont: Parser[Expr] = "[" ~> ident ~ "]" ~ atom ^^ { case c ~ _ ~ a => Cont(Var(c), a) }
+  def atom: Parser[Expr] = lambda | mu | cont | variable | "(" ~> expr <~ ")"
+  def expr: Parser[Expr] = rep1(atom) ^^ (_.reduceLeft(Appl.apply))
 
+  def parseExpr(input: String): Either[String, Expr] =
+    parseAll(expr, input) match
+      case Success(result, _) => Right(result)
+      case NoSuccess(msg, _) => Left(s"Parse error: $msg")
 
+// === Substitution ===
+object Substitution:
+  def apply(bind: Var, repl: Expr, expr: Expr): Expr =
+    val freeInRepl = repl.freeVars
+    expr match
+      case v: Var => if v == bind then repl else v
+      case Appl(f, a) => Appl(apply(bind, repl, f), apply(bind, repl, a))
+      case Cont(f, a) => Cont(apply(bind, repl, f), apply(bind, repl, a))
+      case Lam(p, b) => 
+        if p == bind then
+          Lam(p, b)
+        else if freeInRepl.contains(p) then
+          val fresh = Var(s"${p.name}_${Gensym.fresh()}")
+          Lam(fresh, apply(bind, repl, apply(p, fresh, b)))
+        else Lam(p, apply(bind, repl, b))
+      case Mu(p, b) => 
+        if p == bind then
+          Mu(p, b)
+        else if freeInRepl.contains(p) then
+          val fresh = Var(s"${p.name}_${Gensym.fresh()}")
+          Mu(fresh, apply(bind, repl, apply(p, fresh, b)))
+        else Mu(p, apply(bind, repl, b))

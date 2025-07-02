@@ -1,56 +1,71 @@
-package lambdamu
+// === REPL ===
+import scala.io.StdIn.readLine
+import scala.collection.mutable
+import java.io.{PrintWriter, File}
+import scala.io.Source
 
-import lambdamu.{Expr, Evaluator, Parser, PrettyPrinter}
+import LambdaParser.parseExpr
+import Evaluator.evalSteps
 
-object Repl:
-  def run(): Unit =
-    println("λμ-Calculus REPL (Scala 3). Type :q to quit.")
-    var continue = true
+object REPL extends App:
+  val env: mutable.Map[String, Expr] = mutable.Map.empty
 
-    def handleLine(raw: String): Unit =
-      val line = raw.trim
-      if line.startsWith("let ") && line.contains("=") then
-        val parts = line.drop(4).split("=", 2).map(_.trim)
-        if parts.length == 2 then
-          val name = parts(0)
-          val rhs = parts(1)
-          try
-            val expr = Parser.parse(rhs)
-            Evaluator.env(name) = Evaluator.resolve(expr)
-            println(s"let $name = ${PrettyPrinter.pretty(Evaluator.env(name))}")
-          catch case ex: Exception => println(s"Definition error: ${ex.getMessage}")
-        else println("Error: malformed let statement.")
-      else if line.startsWith("load \"") && line.endsWith("\"") then
-        val filename = line.stripPrefix("load \"").stripSuffix("\"")
-        try
-          val source = scala.io.Source.fromFile(filename)
-          try source.getLines().filter(_.nonEmpty).foreach { ln =>
-            println(s"> $ln")
-            handleLine(ln.trim)
-          } finally source.close()
-        catch case ex: Exception => println(s"Could not load '$filename': ${ex.getMessage}")
-      else if line.startsWith("save \"") && line.endsWith("\"") then
-        val filename = line.stripPrefix("save \"").stripSuffix("\"")
-        try
-          val writer = new java.io.PrintWriter(filename)
-          try
-            for ((name, expr) <- Evaluator.env) do
-              val prettyExpr = PrettyPrinter.pretty(expr)
-              writer.println(s"let $name = $prettyExpr")
-            println(s"Environment saved to '$filename'.")
-          finally writer.close()
-        catch case ex: Exception =>
-          println(s"Could not save to '$filename': ${ex.getMessage}")
-      else if line.nonEmpty then
-        try
-          val expr = Evaluator.resolve(Parser.parse(line))
-          Evaluator.evalSteps(expr).zipWithIndex.foreach((e, i) => println(s"[$i] ${PrettyPrinter.pretty(e)}"))
-        catch case ex: Exception => println(s"Error: ${ex.getMessage}")
+  def resolve(expr: Expr, bound: Set[Var] = Set.empty): Expr = expr match
+    case Var(x) => if bound.exists(_.name == x) then expr else env.getOrElse(x, expr)
+    case Appl(f, a) => Appl(resolve(f, bound), resolve(a, bound))
+    case Cont(f, a) => Cont(resolve(f, bound), resolve(a, bound))
+    case Lam(p, b) => Lam(p, resolve(b, bound + p))
+    case Mu(p, b) => Mu(p, resolve(b, bound + p))
 
-    while continue do
-      print("> "); Console.flush()
-      scala.io.StdIn.readLine() match
-        case null | ":q" => continue = false
-        case input        => handleLine(input)
-    println("Goodbye.")
+  def pretty(expr: Expr): String = expr match
+    case Var(x) => x
+    case Lam(p, b) => s"λ${p.name}.${pretty(b)}"
+    case Mu(p, b) => s"μ${p.name}.${pretty(b)}"
+    case Cont(c, a) => s"[${pretty(c)}] ${pretty(a)}"
+    case Appl(f, a) => s"${pretty(f)}" + (a match
+      case Var(_) => s" ${pretty(a)}"
+      case _ => s" (${pretty(a)})")
 
+  def saveEnv(filename: String): Unit =
+    val out = new PrintWriter(File(filename))
+    try env.foreach { case (k, v) => out.println(s"let $k = ${pretty(v)}") }
+    finally out.close()
+
+  def loadEnv(filename: String): Unit =
+    for line <- Source.fromFile(filename).getLines do
+      if line.startsWith("let ") then
+        line.drop(4).split("=", 2).map(_.trim) match
+          case Array(name, exprStr) if name.nonEmpty && exprStr.nonEmpty =>
+            LambdaParser.parseExpr(exprStr) match
+              case Right(expr) => env(name) = resolve(expr)
+              case Left(err) => println(s"Failed to load $name: $err")
+          case _ => println(s"Invalid line: $line")
+
+  println("Lambda-Mu Calculus REPL. Type :help for help, :q to quit.")
+  Iterator.continually(readLine("λ> ")).takeWhile(_ != null).foreach:
+    case ":q" => println("Goodbye!"); sys.exit()
+    case ":help" =>
+      println("Commands:\n  let <name> = <expr>\n  :env\n  :save <file>\n  :load <file>\n  :help\n  :q")
+    case ":env" =>
+      if env.isEmpty then println("Empty environment")
+      else env.foreach((k, v) => println(s"$k = ${pretty(v)}"))
+    case line if line.startsWith(":save ") =>
+      saveEnv(line.stripPrefix(":save ").trim)
+    case line if line.startsWith(":load ") =>
+      loadEnv(line.stripPrefix(":load ").trim)
+    case line if line.startsWith("let ") =>
+      line.drop(4).split("=", 2).map(_.trim) match
+        case Array(name, exprStr) if name.nonEmpty && exprStr.nonEmpty =>
+          LambdaParser.parseExpr(exprStr) match
+            case Right(expr) =>
+              val resolved = resolve(expr)
+              env(name) = resolved
+              println(s"$name = ${pretty(resolved)}")
+            case Left(err) => println(err)
+        case _ => println("Usage: let <name> = <expr>")
+    case line =>
+      LambdaParser.parseExpr(line) match
+        case Right(expr) =>
+          val resolved = resolve(expr)
+          Evaluator.evalSteps(resolved).zipWithIndex.foreach((e, i) => println(s"[$i] ${pretty(e)}"))
+        case Left(err) => println(err)
