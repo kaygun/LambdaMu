@@ -1,5 +1,26 @@
 // === Evaluator ===
 object Evaluator:
+  def betaReduction(bind: Var, repl: Expr, expr: Expr): Expr =
+    val freeInRepl = repl.freeVars
+    expr match
+      case v: Var => if v == bind then repl else v
+      case Appl(f, a) => Appl(betaReduction(bind, repl, f), betaReduction(bind, repl, a))
+      case Cont(f, a) => Cont(betaReduction(bind, repl, f), betaReduction(bind, repl, a))
+      case Lam(p, b) => 
+        if p == bind then
+          Lam(p, b)
+        else if freeInRepl.contains(p) then
+          val fresh = Var(s"${p.name}_${Gensym.fresh()}")
+          Lam(fresh, betaReduction(bind, repl, betaReduction(p, fresh, b)))
+        else Lam(p, betaReduction(bind, repl, b))
+      case Mu(p, b) => 
+        if p == bind then
+          Mu(p, b)
+        else if freeInRepl.contains(p) then
+          val fresh = Var(s"${p.name}_${Gensym.fresh()}")
+          Mu(fresh, betaReduction(bind, repl, betaReduction(p, fresh, b)))
+        else Mu(p, betaReduction(bind, repl, b))
+
   def reduceExpr(expr: Expr): Expr = expr match
     case Appl(f, a) =>
       reduceHead(f, a).map(reduceExpr).getOrElse {
@@ -21,7 +42,7 @@ object Evaluator:
     case _ => expr
 
   private def reduceHead(f: Expr, a: Expr): Option[Expr] = f match
-    case Lam(x, body) => Some(Substitution(x, a, body))
+    case Lam(x, body) => Some(betaReduction(x, a, body))
     case Mu(v, body) =>
       def subst(m: Expr): Expr = m match
         case Cont(Var(b), x) if v.name == b => Appl(a, subst(x))

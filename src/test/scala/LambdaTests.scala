@@ -32,7 +32,7 @@ class LambdaMuTest extends AnyFunSuite:
     val x = Var("x")
     val y = Var("y")
     val lam = Lam(x, Appl(x, y))
-    val result = Substitution(x, y, lam)
+    val result = Evaluator.betaReduction(x, y, lam)
     assert(result.isInstanceOf[Lam])
     assert(!result.freeVars.contains(x))
   }
