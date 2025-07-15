@@ -5,7 +5,7 @@ import java.io.{PrintWriter, File}
 import scala.io.Source
 
 import LambdaParser.parseExpr
-import Evaluator.evalSteps
+import Evaluator.evalExpr
 
 object REPL extends App:
   val env: mutable.Map[String, Expr] = mutable.Map.empty
@@ -66,6 +66,6 @@ object REPL extends App:
     case line =>
       LambdaParser.parseExpr(line) match
         case Right(expr) =>
-          val resolved = resolve(expr)
-          Evaluator.evalSteps(resolved).zipWithIndex.foreach((e, i) => println(s"[$i] ${pretty(e)}"))
+          val result = Evaluator.evalExpr(resolve(expr))
+          println(s"${pretty(result)}")
         case Left(err) => println(err)

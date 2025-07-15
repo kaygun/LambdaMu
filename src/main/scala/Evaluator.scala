@@ -1,6 +1,6 @@
 // === Evaluator ===
 object Evaluator:
-  def betaReduction(bind: Var, repl: Expr, expr: Expr): Expr =
+  private def betaReduction(bind: Var, repl: Expr, expr: Expr): Expr =
     val freeInRepl = repl.freeVars
     expr match
       case v: Var => if v == bind then repl else v
@@ -21,27 +21,7 @@ object Evaluator:
           Mu(fresh, betaReduction(bind, repl, betaReduction(p, fresh, b)))
         else Mu(p, betaReduction(bind, repl, b))
 
-  def reduceExpr(expr: Expr): Expr = expr match
-    case Appl(f, a) =>
-      reduceHead(f, a).map(reduceExpr).getOrElse {
-        val (f2, a2) = (reduceExpr(f), reduceExpr(a))
-        if !f2.alphaEq(f) || !a2.alphaEq(a) then reduceExpr(Appl(f2, a2)) else expr
-      }
-    case Cont(f, a) =>
-      reduceCont(f, a).map(reduceExpr).getOrElse {
-        val (f2, a2) = (reduceExpr(f), reduceExpr(a))
-        if !f2.alphaEq(f) || !a2.alphaEq(a) then reduceExpr(Cont(f2, a2)) else expr
-      }
-    case Lam(p, b) =>
-      val b2 = reduceExpr(b)
-      if !b2.alphaEq(b) then Lam(p, b2) else expr
-    case Mu(Var(a), Cont(Var(c), x)) if a == c => reduceExpr(x)
-    case Mu(p, b) =>
-      val b2 = reduceExpr(b)
-      if !b2.alphaEq(b) then Mu(p, b2) else expr
-    case _ => expr
-
-  private def reduceHead(f: Expr, a: Expr): Option[Expr] = f match
+  private def reduceAppl(f: Expr, a: Expr): Option[Expr] = f match
     case Lam(x, body) => Some(betaReduction(x, a, body))
     case Mu(v, body) =>
       def subst(m: Expr): Expr = m match
@@ -61,13 +41,32 @@ object Evaluator:
     case (Var(a2), Cont(Var(a1), x)) if a1 == a2 => Some(Cont(Var(a1), x))
     case _ => None
 
-  def evalSteps(expr: Expr, maxSteps: Int = 1000): List[Expr] =
+  def reduceExpr(expr: Expr): Expr = expr match
+    case Appl(f, a) =>
+      reduceAppl(f, a).map(reduceExpr).getOrElse {
+        val (f2, a2) = (reduceExpr(f), reduceExpr(a))
+        if !f2.alphaEq(f) || !a2.alphaEq(a) then reduceExpr(Appl(f2, a2)) else expr
+      }
+    case Cont(f, a) =>
+      reduceCont(f, a).map(reduceExpr).getOrElse {
+        val (f2, a2) = (reduceExpr(f), reduceExpr(a))
+        if !f2.alphaEq(f) || !a2.alphaEq(a) then reduceExpr(Cont(f2, a2)) else expr
+      }
+    case Lam(p, b) =>
+      val b2 = reduceExpr(b)
+      if !b2.alphaEq(b) then Lam(p, b2) else expr
+    case Mu(Var(a), Cont(Var(c), x)) if a == c => reduceExpr(x)
+    case Mu(p, b) =>
+      val b2 = reduceExpr(b)
+      if !b2.alphaEq(b) then Mu(p, b2) else expr
+    case _ => expr
+
+  def evalExpr(expr: Expr, maxSteps: Int = 1000): Expr =
     @annotation.tailrec
-    def loop(current: Expr, history: List[Expr], count: Int): List[Expr] =
-      if count >= maxSteps then history :+ current
+    def loop(current: Expr, count: Int): Expr =
+      if count >= maxSteps then current
       else
         val next = reduceExpr(current)
-        if history.exists(_.alphaEq(next)) then history :+ current
-        else if next.alphaEq(current) then history :+ current
-        else loop(next, history :+ current, count + 1)
-    loop(expr, Nil, 0)
+        if next.alphaEq(current) then current
+        else loop(next, count + 1)
+    loop(expr, 0)
