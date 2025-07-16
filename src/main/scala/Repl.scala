@@ -1,34 +1,19 @@
-// === REPL ===
 import scala.io.StdIn.readLine
 import scala.collection.mutable
 import java.io.{PrintWriter, File}
 import scala.io.Source
-
-import LambdaParser.parseExpr
-import Evaluator.evalExpr
 
 object REPL extends App:
   val env: mutable.Map[String, Expr] = mutable.Map.empty
 
   def resolve(expr: Expr, bound: Set[Var] = Set.empty): Expr = expr match
     case Var(x) => if bound.exists(_.name == x) then expr else env.getOrElse(x, expr)
-    case Appl(f, a) => Appl(resolve(f, bound), resolve(a, bound))
-    case Cont(f, a) => Cont(resolve(f, bound), resolve(a, bound))
-    case Lam(p, b) => Lam(p, resolve(b, bound + p))
-    case Mu(p, b) => Mu(p, resolve(b, bound + p))
-
-  def pretty(expr: Expr): String = expr match
-    case Var(x) => x
-    case Lam(p, b) => s"λ${p.name}.${pretty(b)}"
-    case Mu(p, b) => s"μ${p.name}.${pretty(b)}"
-    case Cont(c, a) => s"[${pretty(c)}] ${pretty(a)}"
-    case Appl(f, a) => s"${pretty(f)}" + (a match
-      case Var(_) => s" ${pretty(a)}"
-      case _ => s" (${pretty(a)})")
+    case p: Pair => p.withParts(resolve(p.head, bound), resolve(p.arg, bound))
+    case b: Bind => b.withBody(b.param, resolve(b.body, bound + b.param))
 
   def saveEnv(filename: String): Unit =
     val out = new PrintWriter(File(filename))
-    try env.foreach { case (k, v) => out.println(s"let $k = ${pretty(v)}") }
+    try env.foreach { case (k, v) => out.println(s"let $k = ${v.pretty}") }
     finally out.close()
 
   def loadEnv(filename: String): Unit =
@@ -48,7 +33,7 @@ object REPL extends App:
       println("Commands:\n  let <name> = <expr>\n  :env\n  :save <file>\n  :load <file>\n  :help\n  :q")
     case ":env" =>
       if env.isEmpty then println("Empty environment")
-      else env.foreach((k, v) => println(s"$k = ${pretty(v)}"))
+      else env.foreach((k, v) => println(s"$k = ${v.pretty}"))
     case line if line.startsWith(":save ") =>
       saveEnv(line.stripPrefix(":save ").trim)
     case line if line.startsWith(":load ") =>
@@ -60,12 +45,12 @@ object REPL extends App:
             case Right(expr) =>
               val resolved = resolve(expr)
               env(name) = resolved
-              println(s"$name = ${pretty(resolved)}")
+              println(s"$name = ${resolved.pretty}")
             case Left(err) => println(err)
         case _ => println("Usage: let <name> = <expr>")
     case line =>
       LambdaParser.parseExpr(line) match
         case Right(expr) =>
           val result = Evaluator.evalExpr(resolve(expr))
-          println(s"${pretty(result)}")
+          println(s"${result.pretty}")
         case Left(err) => println(err)

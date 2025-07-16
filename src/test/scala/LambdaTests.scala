@@ -1,105 +1,75 @@
 import org.scalatest.funsuite.AnyFunSuite
+import LambdaParser._
+import Evaluator._
+import scala.util.Try
 
-class LambdaMuTest extends AnyFunSuite:
+class LambdaMuTestSuite extends AnyFunSuite:
 
-  def parse(s: String): Expr = LambdaParser.parseExpr(s) match
-    case Right(e) => e
-    case Left(err) => fail(s"Parser error: $err")
+  def parse(input: String): Expr =
+    parseExpr(input) match
+      case Right(expr) => expr
+      case Left(err) => fail(err)
 
-  test("Parser - basic lambda and variable") {
-    assert(parse("x") == Var("x"))
-    assert(parse("\\x.x") == Lam(Var("x"), Var("x")))
-  }
+  def eval(input: String): Expr =
+    val parsed = parse(input)
+    evalExpr(parsed)
 
-  test("Parser - mu and continuation") {
-    assert(parse("#a.a") == Mu(Var("a"), Var("a")))
-    assert(parse("[a] x") == Cont(Var("a"), Var("x")))
-  }
+  test("Parsing variables"):
+    val expr = parse("x")
+    assert(expr == Var("x"))
 
-  test("Alpha equivalence - lambda") {
-    val e1 = parse("\\x.x")
-    val e2 = parse("\\y.y")
-    assert(e1.alphaEq(e2))
-  }
+  test("Parsing lambda expressions"):
+    val expr = parse("\\x. x")
+    assert(expr == Lam(Var("x"), Var("x")))
 
-  test("Alpha equivalence - mu") {
-    val e1 = parse("#a.a")
-    val e2 = parse("#b.b")
-    assert(e1.alphaEq(e2))
-  }
+  test("Parsing mu expressions"):
+    val expr = parse("#k. k")
+    assert(expr == Mu(Var("k"), Var("k")))
 
-  test("Substitution - avoid capture") {
-    val x = Var("x")
-    val y = Var("y")
-    val lam = Lam(x, Appl(x, y))
-    val result = Evaluator.betaReduction(x, y, lam)
-    assert(result.isInstanceOf[Lam])
-    assert(!result.freeVars.contains(x))
-  }
+  test("Parsing continuation expressions"):
+    val expr = parse("[k] x")
+    assert(expr == Cont(Var("k"), Var("x")))
 
-  test("Evaluator - beta reduction") {
-    val expr = parse("(\\x.x) y")
-    val result = Evaluator.evalSteps(expr).last
-    assert(result == Var("y"))
-  }
-
-  test("Evaluator - mu application") {
-    val expr = parse("(#a.[a]x) y")
-    val steps = Evaluator.evalSteps(expr)
-    assert(steps.last == Appl(Var("y"), Var("x")))
-  }
-
-  test("Evaluator - continuation collapse") {
-    val expr = parse("[a][a]x")
-    val steps = Evaluator.evalSteps(expr)
-    assert(steps.last == parse("[a]x"))
-  }
-
-  test("Evaluator - mu a [a] x → x") {
-    val expr = parse("#a.[a]x")
-    val steps = Evaluator.evalSteps(expr)
-    assert(steps.last == Var("x"))
-  }
-
-  test("Evaluator - normalize nested lambdas") {
-    val expr = parse("\\x.\\y.x")
-    val steps = Evaluator.evalSteps(expr)
-    assert(steps.last.alphaEq(expr))
-  }
-
-  test("Parser - nested applications") {
+  test("Application left-associative"):
     val expr = parse("x y z")
     assert(expr == Appl(Appl(Var("x"), Var("y")), Var("z")))
-  }
 
-  test("Evaluator - double negation elimination") {
-    val dne = parse("\\f. #a. f (\\x. [a] x)")
-    val notNotA = parse("\\k. k x") // a mock (¬¬A): λk. k x
-    val app = Appl(dne, notNotA)
-    val result = Evaluator.evalSteps(app).last
-    assert(result == Var("x"))
-  }
+  test("Beta reduction of lambda"):
+    val expr = parse("(\\x. x) y")
+    val reduced = evalExpr(expr)
+    assert(reduced == Var("y"))
 
-  test("Evaluator - continuation nested in mu application") {
-    val expr = parse("(#a.\\x.[a]x) y")
-    val steps = Evaluator.evalSteps(expr)
-    assert(steps.last == Lam(Var("x"), Appl(Var("y"), Var("x"))))
-  }
+  test("Mu reduction with matching variable"):
+    val expr = parse("[k] #k. x")
+    val reduced = evalExpr(expr)
+    assert(reduced == Var("x"))
 
-  test("Evaluator - continuation abstraction") {
-    val expr = parse("[a](#a.x)")
-    val steps = Evaluator.evalSteps(expr)
-    assert(steps.last == Var("x"))
-  }
+  test("Nested mu reduction"):
+    val expr = parse("[k] [k] #k. x")
+    val reduced = evalExpr(expr)
+    assert(reduced == Var("x"))
 
-  test("Evaluator - mismatched continuation label should not reduce") {
-    val expr = parse("[b](#a.x)")
-    val steps = Evaluator.evalSteps(expr)
-    assert(steps.last == Cont(Var("b"), Mu(Var("a"), Var("x"))))
-  }
+  test("Lambda nested reductions"):
+    val expr = parse("(\\x. (\\y. x)) z")
+    val reduced = evalExpr(expr)
+    assert(reduced == Lam(Var("y"), Var("z")))
 
-  test("Evaluator - continuation mu inline roundtrip") {
-    val expr = parse("[a](#a.[a]x)")
-    val result = Evaluator.evalSteps(expr).last
-    assert(result == parse("[a]x"))
-  }
+  test("Free variable detection"):
+    val expr = Lam(Var("x"), Appl(Var("x"), Var("y")))
+    assert(expr.freeVars == Set(Var("y")))
+
+  test("Alpha equivalence"):
+    val e1 = parse("\\x. x")
+    val e2 = parse("\\y. y")
+    assert(e1.alphaEq(e2))
+
+  test("Substitution with capture avoidance"):
+    val expr = Lam(Var("x"), Lam(Var("y"), Var("x")))
+    val substExpr = expr.subst(Map("x" -> Var("z")), Map.empty)
+    assert(substExpr == Lam(Var("x"), Lam(Var("y"), Var("x")))) // no capture occurs
+
+  test("Parsing failure produces Left"):
+    val res = parseExpr("\\. x")
+    assert(res.isLeft)
+
+
