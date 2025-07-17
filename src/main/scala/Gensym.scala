@@ -4,4 +4,3 @@ object Gensym:
   def fresh(prefix: String = "_"): String =
     counter += 1
     s"$prefix$counter"
-
