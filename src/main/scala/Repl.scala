@@ -1,4 +1,3 @@
-// === REPL ===
 import scala.io.StdIn.readLine
 import scala.collection.mutable
 import java.io.{PrintWriter, File}
@@ -81,7 +80,7 @@ object REPL extends App:
     case line if line.nonEmpty =>
       LambdaParser.parseExpr(line) match
         case Right(expr) =>
-          val result = Evaluator.evalExpr(resolve(expr))
+          val result = resolve(expr).eval()
           println(s"${result.pretty}")
         case Left(err) => println(err)
       true
@@ -89,7 +88,7 @@ object REPL extends App:
 
   println("λμ-calculus REPL")
   println("Type :help for commands, :q to quit")
-  
+
   Iterator.continually(readLine("λμ> "))
     .takeWhile(_ != null)
     .map(processCommand)

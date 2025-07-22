@@ -1,18 +1,15 @@
 import org.scalatest.funsuite.AnyFunSuite
 import LambdaParser._
-import Evaluator._
-import scala.util.Try
 
 class LambdaMuTestSuite extends AnyFunSuite:
 
   def parse(input: String): Expr =
     parseExpr(input) match
       case Right(expr) => expr
-      case Left(err) => fail(err)
+      case Left(err)   => fail(err)
 
   def eval(input: String): Expr =
-    val parsed = parse(input)
-    evalExpr(parsed)
+    parse(input).eval()
 
   test("Parsing variables"):
     val expr = parse("x")
@@ -35,24 +32,20 @@ class LambdaMuTestSuite extends AnyFunSuite:
     assert(expr == Appl(Appl(Var("x"), Var("y")), Var("z")))
 
   test("Beta reduction of lambda"):
-    val expr = parse("(\\x. x) y")
-    val reduced = evalExpr(expr)
-    assert(reduced == Var("y"))
+    val result = eval("(\\x. x) y")
+    assert(result == Var("y"))
 
   test("Mu reduction with matching variable"):
-    val expr = parse("[k] #k. x")
-    val reduced = evalExpr(expr)
-    assert(reduced == Var("x"))
+    val result = eval("[k] #k. x")
+    assert(result == Var("x"))
 
   test("Nested mu reduction"):
-    val expr = parse("[k] [k] #k. x")
-    val reduced = evalExpr(expr)
-    assert(reduced == Var("x"))
+    val result = eval("[k] [k] #k. x")
+    assert(result == Var("x"))
 
   test("Lambda nested reductions"):
-    val expr = parse("(\\x. (\\y. x)) z")
-    val reduced = evalExpr(expr)
-    assert(reduced == Lam(Var("y"), Var("z")))
+    val result = eval("(\\x. (\\y. x)) z")
+    assert(result == Lam(Var("y"), Var("z")))
 
   test("Free variable detection"):
     val expr = Lam(Var("x"), Appl(Var("x"), Var("y")))
@@ -71,5 +64,3 @@ class LambdaMuTestSuite extends AnyFunSuite:
   test("Parsing failure produces Left"):
     val res = parseExpr("\\. x")
     assert(res.isLeft)
-
-

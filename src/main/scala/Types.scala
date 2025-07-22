@@ -5,8 +5,25 @@ sealed trait Expr:
   def alphaEq(that: Expr, env: Map[String, String] = Map.empty): Boolean
   def subst(termSubst: Map[String, Expr] = Map.empty, contSubst: Map[String, Expr] = Map.empty): Expr
   def betaReduce(bind: Var, repl: Expr): Expr = subst(Map(bind.name -> repl), Map.empty)
-  def reduceOnce: Expr = reduction.getOrElse(this)
+  def step: Expr = reduction.getOrElse(this)
   def reduction: Option[Expr] = None
+  def eval(maxSteps: Int = 1000): Expr =
+    @annotation.tailrec
+    def loop(current: Expr, count: Int): Expr =
+      if count >= maxSteps then
+        println(s"Warning: Maximum steps ($maxSteps) reached, evaluation may be incomplete")
+        current
+      else
+        val next = current.step
+        if next.alphaEq(current) then current
+        else loop(next, count + 1)
+    loop(this, 0)
+
+object Expr:
+  private var counter = 0
+  def fresh(prefix: String = "_"): String =
+    counter += 1
+    s"$prefix$counter"
 
 abstract class Bind(val param: Var, val body: Expr) extends Expr:
   def withBody(p: Var, b: Expr): Bind
@@ -14,17 +31,17 @@ abstract class Bind(val param: Var, val body: Expr) extends Expr:
   def freeContVars = body.freeContVars
   def alphaEq(that: Expr, env: Map[String, String]) = that match
     case b: Bind if getClass == b.getClass =>
-      val f = Gensym.fresh()
+      val f = Expr.fresh()
       body.alphaEq(b.body, env + (param.name -> f, b.param.name -> f))
     case _ => false
   def subst(t: Map[String, Expr], c: Map[String, Expr]) =
     if (t.values ++ c.values).flatMap(e => e.freeVars ++ e.freeContVars).exists(_ == param)
     then
-      val f = Var(s"${param.name}_${Gensym.fresh()}")
+      val f = Var(s"${param.name}_${Expr.fresh()}")
       withBody(f, body.subst(Map(param.name -> f), Map()).subst(t - param.name, c))
     else withBody(param, body.subst(t - param.name, c))
-  override def reduceOnce = reduction.getOrElse {
-    val r = body.reduceOnce
+  override def step = reduction.getOrElse {
+    val r = body.step
     if !r.alphaEq(body) then withBody(param, r) else this
   }
 
@@ -37,9 +54,9 @@ abstract class Pair(val head: Expr, val arg: Expr) extends Expr:
       head.alphaEq(p.head, env) && arg.alphaEq(p.arg, env)
     case _ => false
   def subst(t: Map[String, Expr], c: Map[String, Expr]) = withParts(head.subst(t, c), arg.subst(t, c))
-  override def reduceOnce = reduction.getOrElse {
-    val nh = head.reduceOnce
-    val na = arg.reduceOnce
+  override def step = reduction.getOrElse {
+    val nh = head.step
+    val na = arg.step
     val r = withParts(nh, na)
     if !alphaEq(r) then r else this
   }
@@ -64,7 +81,7 @@ case class Mu(override val param: Var, override val body: Expr) extends Bind(par
   override def subst(t: Map[String, Expr], c: Map[String, Expr]) =
     if (t.values ++ c.values).flatMap(e => e.freeVars ++ e.freeContVars).exists(_ == param)
     then
-      val f = Var(s"${param.name}_${Gensym.fresh()}")
+      val f = Var(s"${param.name}_${Expr.fresh()}")
       Mu(f, body.subst(Map(param.name -> f), Map()).subst(t, c - param.name))
     else Mu(param, body.subst(t, c - param.name))
   override def reduction = body match
