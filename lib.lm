@@ -6,5 +6,5 @@ let F = zero
 let T = λf.λx.f
 let or  = λa.λb.(a a b)
 let and = λa.λb.(a b a)
-let DNE = λx.μa.([a](x (λb.[a] b)))
-DNE (λk.μk.[k]z)
+let DNE = (λx.μα.x (λy.[α] y)) 
+DNE (λf.f z) 
