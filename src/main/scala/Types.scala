@@ -86,15 +86,17 @@ case class Mu(param: Var, body: Expr) extends Expr:
     case _ => None
 
 case class Appl(head: Expr, arg: Expr) extends Expr:
-  private def argWithParens = arg match
-    case _: Appl | _: Lam | _: Mu => s"(${arg.pretty})"
-    case _ => arg.pretty
   def pretty = head match
     case _: Lam | _: Mu => s"(${head.pretty}) ${argWithParens}"
     case _ => s"${head.pretty} ${argWithParens}"
   
+  private def argWithParens = arg match
+    case _: Appl | _: Lam | _: Mu => s"(${arg.pretty})"
+    case _ => arg.pretty
   def freeVars = head.freeVars ++ arg.freeVars
-  def freeContVars = head.freeContVars ++ arg.freeContVars
+  def freeContVars = head match
+    case Var(n) => Set(Var(n)) ++ arg.freeContVars
+    case _ => head.freeContVars ++ arg.freeContVars
   def alphaEq(that: Expr, env: Map[String, String]) = that match
     case Appl(otherHead, otherArg) =>
       head.alphaEq(otherHead, env) && arg.alphaEq(otherArg, env)
@@ -111,10 +113,11 @@ case class Appl(head: Expr, arg: Expr) extends Expr:
     case _ => None
 
 case class Cont(head: Expr, arg: Expr) extends Expr:
+  def pretty = s"[${head.pretty}] ${argWithParens}"
+  
   private def argWithParens = arg match
     case _: Appl | _: Lam | _: Mu => s"(${arg.pretty})"
     case _ => arg.pretty
-  def pretty = s"[${head.pretty}] ${argWithParens}"
   def freeVars = head.freeVars ++ arg.freeVars
   def freeContVars = head match
     case Var(n) => Set(Var(n)) ++ arg.freeContVars
@@ -133,6 +136,7 @@ case class Cont(head: Expr, arg: Expr) extends Expr:
     if !this.alphaEq(r) then r else this
   }
   override def reduction = (head, arg) match
-    case (Var(a2), Mu(Var(a1), b)) if a1 == a2 => Some(b)
-    case (Var(a2), Cont(Var(a1), m)) if a1 == a2 => Some(Cont(Var(a1), m))
+    case (Var(a2), Mu(Var(a1), b)) if a1 == a2 => Some(b)  // [α](μα.M) → M
+    case (Var(a2), Mu(Var(a1), b)) if a1 != a2 => Some(b.subst(Map.empty, Map(a1 -> Var(a2))))  // [α](μβ.M) → M[α/β]
+    case (Var(a2), Cont(Var(a1), m)) if a1 == a2 => Some(Cont(Var(a1), m))  // [α][α]M → [α]M
     case _ => None

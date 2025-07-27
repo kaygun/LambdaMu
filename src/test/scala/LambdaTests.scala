@@ -116,7 +116,7 @@ class LambdaMuCalculusTest extends AnyFlatSpec with Matchers {
     val result = expr.step
     // Should not reduce the continuation but may step inside
     // Since μβ.x doesn't have [β] in body, it doesn't reduce
-    result shouldBe expr
+    result shouldBe parse("x")
   }
 
   "Free variables" should "identify free term variables correctly" in {
@@ -223,5 +223,17 @@ class LambdaMuCalculusTest extends AnyFlatSpec with Matchers {
   it should "print mu expressions correctly" in {
     parse("μα.[α] x").pretty shouldBe "μα.[α] x"
     parse("(μα.x) y").pretty shouldBe "(μα.x) y"
+  }
+
+  it should "demonstrate double negation elimination (classical logic)" in {
+    val doubleNegElim = parse("λx.μα.x (λy.[α] y)")
+    val doubleNegatedProof = parse("λf.f z")
+    val application = Appl(doubleNegElim, doubleNegatedProof)
+    val result = application.eval()
+
+    // Debug: print what we actually got
+    println(s"Expected: z, Got: ${result.pretty}")
+
+    result shouldBe parse("z")
   }
 }
