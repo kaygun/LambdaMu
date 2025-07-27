@@ -111,11 +111,10 @@ case class Appl(head: Expr, arg: Expr) extends Expr:
     case _ => None
 
 case class Cont(head: Expr, arg: Expr) extends Expr:
-  def pretty = s"[${head.pretty}] ${argWithParens}"
-  
   private def argWithParens = arg match
     case _: Appl | _: Lam | _: Mu => s"(${arg.pretty})"
     case _ => arg.pretty
+  def pretty = s"[${head.pretty}] ${argWithParens}"
   def freeVars = head.freeVars ++ arg.freeVars
   def freeContVars = head match
     case Var(n) => Set(Var(n)) ++ arg.freeContVars
