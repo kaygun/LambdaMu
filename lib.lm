@@ -1,11 +1,10 @@
-let zero = (λf.λx. x)
-let S = (λn.λf.λx. f (n f x))
-let add = (λn.λm.λf.λx. n f (m f x))
-let mul = (λn.λm.λf. n (m f))
+let zero = λf.λx.x
+let S = λn.λf.λx.(f (n f x))
+let add = λn.λm.λf.λx.(n f (m f x))
+let mul = λn.λm.λf.(n (m f))
 let F = zero
-let T = (λf.λx. f)
-let and = (λa.λb. a a b)
-let or = (λa.λb. a b a)
-
-let DNE = (λx.μa.[a] (x (λb.[a]b)))
+let T = λf.λx.f
+let or  = λa.λb.(a a b)
+let and = λa.λb.(a b a)
+let DNE = λx.μa.([a](x (λb.[a] b)))
 DNE (λk.μk.[k]z)

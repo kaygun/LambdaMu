@@ -25,42 +25,6 @@ object Expr:
     counter += 1
     s"$prefix$counter"
 
-abstract class Bind(val param: Var, val body: Expr) extends Expr:
-  def withBody(p: Var, b: Expr): Bind
-  def freeVars = body.freeVars - param
-  def freeContVars = body.freeContVars
-  def alphaEq(that: Expr, env: Map[String, String]) = that match
-    case b: Bind if getClass == b.getClass =>
-      val f = Expr.fresh()
-      body.alphaEq(b.body, env + (param.name -> f, b.param.name -> f))
-    case _ => false
-  def subst(t: Map[String, Expr], c: Map[String, Expr]) =
-    if (t.values ++ c.values).flatMap(e => e.freeVars ++ e.freeContVars).exists(_ == param)
-    then
-      val f = Var(s"${param.name}_${Expr.fresh()}")
-      withBody(f, body.subst(Map(param.name -> f), Map()).subst(t - param.name, c))
-    else withBody(param, body.subst(t - param.name, c))
-  override def step = reduction.getOrElse {
-    val r = body.step
-    if !r.alphaEq(body) then withBody(param, r) else this
-  }
-
-abstract class Pair(val head: Expr, val arg: Expr) extends Expr:
-  def withParts(h: Expr, a: Expr): Pair
-  def freeVars = head.freeVars ++ arg.freeVars
-  def freeContVars = head.freeContVars ++ arg.freeContVars
-  def alphaEq(that: Expr, env: Map[String, String]) = that match
-    case p: Pair if getClass == p.getClass =>
-      head.alphaEq(p.head, env) && arg.alphaEq(p.arg, env)
-    case _ => false
-  def subst(t: Map[String, Expr], c: Map[String, Expr]) = withParts(head.subst(t, c), arg.subst(t, c))
-  override def step = reduction.getOrElse {
-    val nh = head.step
-    val na = arg.step
-    val r = withParts(nh, na)
-    if !alphaEq(r) then r else this
-  }
-
 case class Var(name: String) extends Expr:
   def pretty = name
   def freeVars = Set(this)
@@ -70,41 +34,106 @@ case class Var(name: String) extends Expr:
     case _ => false
   def subst(t: Map[String, Expr], c: Map[String, Expr]) = t.getOrElse(name, c.getOrElse(name, this))
 
-case class Lam(override val param: Var, override val body: Expr) extends Bind(param, body):
-  def withBody(p: Var, b: Expr) = Lam(p, b)
+case class Lam(param: Var, body: Expr) extends Expr:
   def pretty = s"λ${param.name}.${body.pretty}"
-
-case class Mu(override val param: Var, override val body: Expr) extends Bind(param, body):
-  def withBody(p: Var, b: Expr) = Mu(p, b)
-  def pretty = s"μ${param.name}.${body.pretty}"
-  override def freeContVars = body.freeContVars - param
-  override def subst(t: Map[String, Expr], c: Map[String, Expr]) =
+  def prettyWithParens(needsParens: Boolean) = 
+    if needsParens then s"(λ${param.name}.${body.pretty})" else pretty
+  def freeVars = body.freeVars - param
+  def freeContVars = body.freeContVars
+  def alphaEq(that: Expr, env: Map[String, String]) = that match
+    case Lam(otherParam, otherBody) =>
+      val f = Expr.fresh()
+      val renamedBody = body.subst(Map(param.name -> Var(f)), Map.empty)
+      val renamedOtherBody = otherBody.subst(Map(otherParam.name -> Var(f)), Map.empty)
+      renamedBody.alphaEq(renamedOtherBody, env)
+    case _ => false
+  def subst(t: Map[String, Expr], c: Map[String, Expr]) =
     if (t.values ++ c.values).flatMap(e => e.freeVars ++ e.freeContVars).exists(_ == param)
     then
-      val f = Var(s"${param.name}_${Expr.fresh()}")
-      Mu(f, body.subst(Map(param.name -> f), Map()).subst(t, c - param.name))
+      val f = Var(Expr.fresh(param.name))
+      Lam(f, body.subst(Map(param.name -> f), Map()).subst(t - param.name, c))
+    else Lam(param, body.subst(t - param.name, c))
+  override def step = reduction.getOrElse {
+    val r = body.step
+    if !r.alphaEq(body) then Lam(param, r) else this
+  }
+
+case class Mu(param: Var, body: Expr) extends Expr:
+  def pretty = s"μ${param.name}.${body.pretty}"
+  def prettyWithParens(needsParens: Boolean) = 
+    if needsParens then s"(μ${param.name}.${body.pretty})" else pretty
+  def freeVars = body.freeVars - param
+  def freeContVars = body.freeContVars - param
+  def alphaEq(that: Expr, env: Map[String, String]) = that match
+    case Mu(otherParam, otherBody) =>
+      val f = Expr.fresh()
+      val renamedBody = body.subst(Map(param.name -> Var(f)), Map.empty)
+      val renamedOtherBody = otherBody.subst(Map(otherParam.name -> Var(f)), Map.empty)
+      renamedBody.alphaEq(renamedOtherBody, env)
+    case _ => false
+  def subst(t: Map[String, Expr], c: Map[String, Expr]) =
+    if (t.values ++ c.values).flatMap(e => e.freeVars ++ e.freeContVars).exists(_ == param)
+    then
+      val f = Var(Expr.fresh(param.name))
+      Mu(f, body.subst(Map(param.name -> f), Map(param.name -> f)).subst(t, c - param.name))
     else Mu(param, body.subst(t, c - param.name))
+  override def step = reduction.getOrElse {
+    val r = body.step
+    if !r.alphaEq(body) then Mu(param, r) else this
+  }
   override def reduction = body match
-    case Cont(Var(c), x) if param.name == c && !x.freeContVars(param) => Some(x)
+    case Cont(Var(c), x) if param.name == c => Some(x)
     case _ => None
 
-case class Appl(override val head: Expr, override val arg: Expr) extends Pair(head, arg):
-  def withParts(h: Expr, a: Expr) = Appl(h, a)
-  def pretty = s"${head.pretty} ${arg.pretty}".trim
+case class Appl(head: Expr, arg: Expr) extends Expr:
+  private def argWithParens = arg match
+    case _: Appl | _: Lam | _: Mu => s"(${arg.pretty})"
+    case _ => arg.pretty
+  def pretty = head match
+    case _: Lam | _: Mu => s"(${head.pretty}) ${argWithParens}"
+    case _ => s"${head.pretty} ${argWithParens}"
+  
+  def freeVars = head.freeVars ++ arg.freeVars
+  def freeContVars = head.freeContVars ++ arg.freeContVars
+  def alphaEq(that: Expr, env: Map[String, String]) = that match
+    case Appl(otherHead, otherArg) =>
+      head.alphaEq(otherHead, env) && arg.alphaEq(otherArg, env)
+    case _ => false
+  def subst(t: Map[String, Expr], c: Map[String, Expr]) = Appl(head.subst(t, c), arg.subst(t, c))
+  override def step = reduction.getOrElse {
+    val nh = head.step
+    val na = arg.step
+    val r = Appl(nh, na)
+    if !this.alphaEq(r) then r else this
+  }
   override def reduction = head match
     case Lam(x, b) => Some(b.betaReduce(x, arg))
     case _ => None
 
-case class Cont(override val head: Expr, override val arg: Expr) extends Pair(head, arg):
-  def withParts(h: Expr, a: Expr) = Cont(h, a)
-  def pretty = s"[${head.pretty}] ${arg.pretty}"
-  override def freeContVars = head match
+case class Cont(head: Expr, arg: Expr) extends Expr:
+  def pretty = s"[${head.pretty}] ${argWithParens}"
+  
+  private def argWithParens = arg match
+    case _: Appl | _: Lam | _: Mu => s"(${arg.pretty})"
+    case _ => arg.pretty
+  def freeVars = head.freeVars ++ arg.freeVars
+  def freeContVars = head match
     case Var(n) => Set(Var(n)) ++ arg.freeContVars
     case _ => head.freeContVars ++ arg.freeContVars
-  override def subst(t: Map[String, Expr], c: Map[String, Expr]) = head match
+  def alphaEq(that: Expr, env: Map[String, String]) = that match
+    case Cont(otherHead, otherArg) =>
+      head.alphaEq(otherHead, env) && arg.alphaEq(otherArg, env)
+    case _ => false
+  def subst(t: Map[String, Expr], c: Map[String, Expr]) = head match
     case Var(n) if c.contains(n) => Cont(c(n).subst(t, c), arg.subst(t, c))
     case _ => Cont(head.subst(t, c), arg.subst(t, c))
+  override def step = reduction.getOrElse {
+    val nh = head.step
+    val na = arg.step
+    val r = Cont(nh, na)
+    if !this.alphaEq(r) then r else this
+  }
   override def reduction = (head, arg) match
     case (Var(a2), Mu(Var(a1), b)) if a1 == a2 => Some(b)
-    case (Var(a2), Cont(Var(a1), _)) if a1 == a2 => Some(arg)
+    case (Var(a2), Cont(Var(a1), m)) if a1 == a2 => Some(Cont(Var(a1), m))
     case _ => None
