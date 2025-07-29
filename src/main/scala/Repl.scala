@@ -40,22 +40,10 @@ object REPL extends App:
 
   private def evaluateExpression(expr: Expr): Expr = {
     val resolved = resolve(expr)
-    val evaluated = resolved.eval()
-    if normalizeResults then evaluated else {
-      // Just use step-based evaluation without normalization
-      @annotation.tailrec
-      def stepOnly(current: Expr, maxSteps: Int = 1000): Expr = {
-        if maxSteps <= 0 then {
-          println("Warning: Maximum steps reached without normalization")
-          current
-        } else {
-          val next = current.step
-          if next.alphaEq(current) then current
-          else stepOnly(next, maxSteps - 1)
-        }
-      }
-      stepOnly(resolved)
-    }
+    val evaluated = resolved.eval()  // Pure lazy evaluation
+    
+    // Only normalize for display if requested
+    if normalizeResults then evaluated.normalize() else evaluated
   }
 
   private def processCommand(input: String): Boolean = input.trim match
@@ -126,12 +114,11 @@ object REPL extends App:
           while stepCount < maxSteps do
             val next = current.step
             if next.alphaEq(current) then
-              println(s"Reached normal form after $stepCount steps")
               if normalizeResults && stepCount == 0 then
                 // Try normalization if no steps were taken
                 val normalized = current.normalize()
                 if !normalized.alphaEq(current) then
-                  println(s"After normalization: ${normalized.pretty}")
+                  println(s"${normalized.pretty}")
               return true
             else
               stepCount += 1
@@ -148,6 +135,27 @@ object REPL extends App:
       
     case line if line.startsWith(":load ") =>
       loadEnv(line.stripPrefix(":load ").trim)
+      true
+      
+    case line if line.contains("==") =>
+      val parts = line.split("==", 2)
+      if parts.length != 2 then
+        println("Usage: <expr1> == <expr2>")
+      else
+        val expr1Str = parts(0).trim
+        val expr2Str = parts(1).trim
+        
+        (LambdaParser.parseExpr(expr1Str), LambdaParser.parseExpr(expr2Str)) match
+          case (Right(expr1), Right(expr2)) =>
+            val resolved1 = resolve(expr1).normalize()
+            val resolved2 = resolve(expr2).normalize()
+            val areAlphaEq = resolved1.alphaEq(resolved2)
+            
+            println(s"${resolved1.pretty} == ${resolved2.pretty}")
+            println(s"${areAlphaEq}")
+              
+          case (Left(err1), _) => println(s"Parse error in first expression: $err1")
+          case (_, Left(err2)) => println(s"Parse error in second expression: $err2")
       true
       
     case line if line.startsWith("let ") =>
