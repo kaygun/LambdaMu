@@ -107,7 +107,7 @@ object REPL extends App:
           val resolved = resolve(expr)
           var current = resolved
           var stepCount = 0
-          val maxSteps = 20
+          val maxSteps = 400
           
           println(s"$stepCount: ${current.pretty}")
           
