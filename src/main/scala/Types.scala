@@ -38,19 +38,16 @@ trait BinaryExpr extends Expr:
   }
   
   override def normalize(): Expr = {
+    // Both the head and the body are normalized
     val normalizedHead = head.normalize()
     val normalizedArg = arg.normalize()
-    
-    // Create new expression with normalized components
+
     val withNormalized = reconstruct(normalizedHead, normalizedArg)
-    
-    // Try stepping the normalized expression (new reductions might be possible)
+
     val stepped = withNormalized.step
     if !stepped.alphaEq(withNormalized) then
-      // If stepping produced a change, recursively normalize the result
       stepped.normalize()
     else
-      // No change from stepping, return the normalized version
       withNormalized
   }
   
@@ -60,15 +57,11 @@ trait BinaryExpr extends Expr:
 trait BindingExpr extends Expr:
   def param: Var
   def body: Expr
-  def bindingSymbol: String  // "λ" or "μ"
-  
-  def pretty = s"$bindingSymbol${param.name}.${body.pretty}"
   
   def freeVars = body.freeVars - param
   
   def alphaEq(that: Expr, env: Map[String, String]) = that match
     case other: BindingExpr if this.getClass == other.getClass =>
-      // Use the environment to track variable correspondences
       val newEnv = env + (param.name -> other.param.name)
       body.alphaEq(other.body, newEnv)
     case _ => false
@@ -82,18 +75,15 @@ trait BindingExpr extends Expr:
   }
   
   override def normalize(): Expr = {
+    // Only the body is normalized
     val normalizedBody = body.normalize()
     
-    // Create new expression with normalized body
     val withNormalized = reconstruct(param, normalizedBody)
     
-    // Try stepping the normalized expression (new reductions might be possible)
     val stepped = withNormalized.step
     if !stepped.alphaEq(withNormalized) then
-      // If stepping produced a change, recursively normalize the result
       stepped.normalize()
     else
-      // No change from stepping, return the normalized version
       withNormalized
   }
   
@@ -115,7 +105,7 @@ case class Var(name: String) extends Expr:
   def subst(t: Map[String, Expr], c: Map[String, Expr]) = t.getOrElse(name, c.getOrElse(name, this))
 
 case class Lam(param: Var, body: Expr) extends BindingExpr:
-  def bindingSymbol = "λ"
+  def pretty = s"λ${param.name}.${body.pretty}"
   def freeContVars = body.freeContVars
   
   def subst(t: Map[String, Expr], c: Map[String, Expr]) =
@@ -127,7 +117,7 @@ case class Lam(param: Var, body: Expr) extends BindingExpr:
   protected def reconstruct(param: Var, newBody: Expr): BindingExpr = Lam(param, newBody)
 
 case class Mu(param: Var, body: Expr) extends BindingExpr:
-  def bindingSymbol = "μ"
+  def pretty = s"μ${param.name}.${body.pretty}"
   def freeContVars = body.freeContVars - param
   
   def subst(t: Map[String, Expr], c: Map[String, Expr]) =
