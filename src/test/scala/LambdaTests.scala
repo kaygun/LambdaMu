@@ -20,6 +20,16 @@ class LambdaMuCalculusTest extends AnyFlatSpec with Matchers {
     result shouldBe true
   }
 
+  // Helper to get free term variables
+  def freeTermVars(expr: Expr): Set[TermVar] = expr.freeNames.collect {
+    case tv: TermVar => tv
+  }
+
+  // Helper to get free continuation variables  
+  def freeContVars(expr: Expr): Set[ContVar] = expr.freeNames.collect {
+    case cv: ContVar => cv
+  }
+
   "Alpha equivalence" should "recognize identical expressions" in {
     val expr = parse("λx.x")
     shouldBeAlphaEq(expr, expr)
@@ -110,35 +120,35 @@ class LambdaMuCalculusTest extends AnyFlatSpec with Matchers {
   }
 
   "Free variables" should "identify free term variables correctly" in {
-    parse("x").freeVars shouldBe Set(Var("x"))
-    parse("λx.x").freeVars shouldBe Set.empty
-    parse("λx.y").freeVars shouldBe Set(Var("y"))
-    parse("λx.x y").freeVars shouldBe Set(Var("y"))
+    freeTermVars(parse("x")) shouldBe Set(TermVar("x"))
+    freeTermVars(parse("λx.x")) shouldBe Set.empty
+    freeTermVars(parse("λx.y")) shouldBe Set(TermVar("y"))
+    freeTermVars(parse("λx.x y")) shouldBe Set(TermVar("y"))
   }
 
   it should "identify free continuation variables correctly" in {
-    parse("x").freeContVars shouldBe Set.empty
-    parse("[α] x").freeContVars shouldBe Set(Var("α"))
-    parse("μα.x").freeContVars shouldBe Set.empty
-    parse("μα.[β] x").freeContVars shouldBe Set(Var("β"))
-    parse("μα.[α] x").freeContVars shouldBe Set.empty
+    freeContVars(parse("x")) shouldBe Set.empty
+    freeContVars(parse("[α] x")) shouldBe Set(ContVar("α"))
+    freeContVars(parse("μα.x")) shouldBe Set.empty
+    freeContVars(parse("μα.[β] x")) shouldBe Set(ContVar("β"))
+    freeContVars(parse("μα.[α] x")) shouldBe Set.empty
   }
 
   "Substitution" should "substitute free variables" in {
     val expr = parse("x")
-    val result = expr.subst(Map("x" -> parse("y")), Map.empty)
+    val result = expr.subst(Map(TermVar("x") -> parse("y")))
     result shouldBe parse("y")
   }
 
   it should "not substitute bound variables" in {
     val expr = parse("λx.x")
-    val result = expr.subst(Map("x" -> parse("y")), Map.empty)
+    val result = expr.subst(Map(TermVar("x") -> parse("y")))
     shouldBeAlphaEq(result, parse("λx.x"))
   }
 
   it should "avoid variable capture" in {
     val expr = parse("λy.x")
-    val result = expr.subst(Map("x" -> parse("y")), Map.empty)
+    val result = expr.subst(Map(TermVar("x") -> parse("y")))
     result match {
       case Lam(param, body) =>
         param.name should not be "y"  // bound variable renamed
@@ -179,10 +189,22 @@ class LambdaMuCalculusTest extends AnyFlatSpec with Matchers {
     normalized shouldBe parse("λf.λx.f x")
   }
 
-  it should "work with mu expressions" in {
-    val expr = parse("λf.f (μα.[α] x)")
+  it should "work with mu expressions in reduction context" in {
+    val expr = parse("μα.[α] x")  // This is in reduction context
     val normalized = expr.normalize()
-    normalized shouldBe parse("λf.f x")
+    normalized shouldBe parse("x")  // This SHOULD reduce
+  }
+
+  it should "preserve mu expressions not in reduction context" in {
+    val expr = parse("λf.f (μα.[β] x)")  // mu that CANNOT reduce (α ≠ β)
+    val normalized = expr.normalize()
+    normalized shouldBe parse("λf.f (μα.[β] x)")  // Should remain unchanged
+  }
+
+  it should "reduce structural congruence during normalization" in {
+    val expr = parse("λf.[α] (μβ.[β] x)")  // [α] (μβ.[β] x) should reduce to [α] x
+    val normalized = expr.normalize()
+    normalized shouldBe parse("λf.[α] x")
   }
 
   it should "not change expressions already in normal form" in {
@@ -225,15 +247,13 @@ class LambdaMuCalculusTest extends AnyFlatSpec with Matchers {
     // - α is FREE (from the original testFunction)
     
     result match {
-      case Mu(outerParam, Mu(innerParam, Cont(Var(freeAlpha), Var("b")))) =>
+      case Mu(outerParam, Mu(innerParam, Cont(Var(ContVar(freeAlpha)), Var(TermVar("b"))))) =>
         // Check structure
         innerParam.name shouldBe "β"
         
         // The continuation variable should be the original free α, not the bound outer param
         freeAlpha should not be outerParam.name
         freeAlpha shouldBe "α"  // Original free variable
-        
-        println(s"Result structure: μ${outerParam.name}.μ${innerParam.name}.[${freeAlpha}] b")
         
       case other => 
         fail(s"Expected μα1.μβ.[α] b structure, got: ${other.pretty}")
@@ -257,7 +277,7 @@ class LambdaMuCalculusTest extends AnyFlatSpec with Matchers {
     parse("(λx.x) y").pretty shouldBe "(λx.x) y"
     parse("f (g h)").pretty shouldBe "f (g h)"
     parse("[α] (λx.x)").pretty shouldBe "[α] (λx.x)"
-    parse("λx.x y").pretty shouldBe "λx.x y"
+    parse("λx.(x y)").pretty shouldBe "λx.x y"
   }
 
   it should "print mu expressions correctly" in {

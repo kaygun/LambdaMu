@@ -1,10 +1,14 @@
+sealed trait Name {
+  def name: String
+}
+case class TermVar(name: String) extends Name
+case class ContVar(name: String) extends Name
+
 sealed trait Expr:
   def pretty: String
-  def freeVars: Set[Var]
-  def freeContVars: Set[Var]
-  def alphaEq(that: Expr, env: Map[String, String] = Map.empty): Boolean
-  def subst(termSubst: Map[String, Expr] = Map.empty, contSubst: Map[String, Expr] = Map.empty): Expr
-  def betaReduce(bind: Var, repl: Expr): Expr = subst(Map(bind.name -> repl), Map.empty)
+  def freeNames: Set[Name]
+  def alphaEq(that: Expr, env: Map[Name, Name] = Map.empty): Boolean
+  def subst(substMap: Map[Name, Expr]): Expr
   def step: Expr = reduction.getOrElse(this)
   def reduction: Option[Expr] = None
   def eval(maxSteps: Int = 1000): Expr =
@@ -13,81 +17,11 @@ sealed trait Expr:
       if count >= maxSteps then current
       else
         val next = current.step
-        if next.alphaEq(current) then current  // Stop at weak head normal form
+        if next.alphaEq(current) then current
         else loop(next, count + 1)
-    loop(this, 0)  
+    loop(this, 0)
 
-  // Default normalize implementation (for Var)
   def normalize(): Expr = this
-
-// Common trait for expressions with two sub-expressions (Appl and Cont)
-trait BinaryExpr extends Expr:
-  def head: Expr
-  def arg: Expr
-  
-  def freeVars = head.freeVars ++ arg.freeVars
-  
-  def alphaEq(that: Expr, env: Map[String, String]) = that match
-    case other: BinaryExpr if this.getClass == other.getClass =>
-      head.alphaEq(other.head, env) && arg.alphaEq(other.arg, env)
-    case _ => false
-    
-  override def step = reduction.getOrElse {
-    val nh = head.step
-    if !nh.alphaEq(head) then reconstruct(nh, arg) else this
-  }
-  
-  override def normalize(): Expr = {
-    // Both the head and the body are normalized
-    val normalizedHead = head.normalize()
-    val normalizedArg = arg.normalize()
-
-    val withNormalized = reconstruct(normalizedHead, normalizedArg)
-
-    val stepped = withNormalized.step
-    if !stepped.alphaEq(withNormalized) then
-      stepped.normalize()
-    else
-      withNormalized
-  }
-  
-  protected def reconstruct(newHead: Expr, newArg: Expr): BinaryExpr
-
-// Common trait for expressions with parameter binding (Lam and Mu)
-trait BindingExpr extends Expr:
-  def param: Var
-  def body: Expr
-  
-  def freeVars = body.freeVars - param
-  
-  def alphaEq(that: Expr, env: Map[String, String]) = that match
-    case other: BindingExpr if this.getClass == other.getClass =>
-      val newEnv = env + (param.name -> other.param.name)
-      body.alphaEq(other.body, newEnv)
-    case _ => false
-    
-  protected def needsCapture(t: Map[String, Expr], c: Map[String, Expr]): Boolean =
-    (t.values ++ c.values).flatMap(e => e.freeVars ++ e.freeContVars).exists(_ == param)
-    
-  override def step = reduction.getOrElse {
-    val r = body.step
-    if !r.alphaEq(body) then reconstruct(param, r) else this
-  }
-  
-  override def normalize(): Expr = {
-    // Only the body is normalized
-    val normalizedBody = body.normalize()
-    
-    val withNormalized = reconstruct(param, normalizedBody)
-    
-    val stepped = withNormalized.step
-    if !stepped.alphaEq(withNormalized) then
-      stepped.normalize()
-    else
-      withNormalized
-  }
-  
-  protected def reconstruct(param: Var, newBody: Expr): BindingExpr
 
 object Expr:
   private var counter = 0
@@ -95,89 +29,101 @@ object Expr:
     counter += 1
     s"$prefix$counter"
 
-case class Var(name: String) extends Expr:
-  def pretty = name
-  def freeVars = Set(this)
-  def freeContVars = Set.empty
-  def alphaEq(that: Expr, env: Map[String, String]) = that match
-    case Var(y) => env.getOrElse(name, name) == env.getOrElse(y, y)
+// Abstract base class for binding constructs (Lambda and Mu)
+abstract class Binding(val param: Name, val body: Expr) extends Expr:
+  def freeNames = body.freeNames - param
+  def alphaEq(that: Expr, env: Map[Name, Name]) = that match
+    case other: Binding if other.getClass == this.getClass =>
+      val newEnv = env + (param -> other.param)
+      body.alphaEq(other.body, newEnv)
     case _ => false
-  def subst(t: Map[String, Expr], c: Map[String, Expr]) = t.getOrElse(name, c.getOrElse(name, this))
+  def subst(substMap: Map[Name, Expr]) =
+    if substMap.values.exists(_.freeNames.contains(param)) then
+      val fresh = freshParam()
+      reconstructWithFresh(fresh, body.subst(Map(param -> Var(fresh))).subst(substMap - param))
+    else reconstruct(param, body.subst(substMap - param))
+  override def step = reduction.getOrElse {
+    body.step match
+      case b if !b.alphaEq(body) => reconstruct(param, b)
+      case _ => this
+  }
+  override def normalize() =
+    val normBody = body.normalize()
+    val candidate = reconstruct(param, normBody)
+    val stepped = candidate.step
+    if !stepped.alphaEq(candidate) then stepped.normalize() else candidate
+    
+  protected def freshParam(): Name
+  protected def reconstruct(param: Name, body: Expr): Binding
+  protected def reconstructWithFresh(fresh: Name, body: Expr): Binding
 
-case class Lam(param: Var, body: Expr) extends BindingExpr:
-  def pretty = s"λ${param.name}.${body.pretty}"
-  def freeContVars = body.freeContVars
-  
-  def subst(t: Map[String, Expr], c: Map[String, Expr]) =
-    if needsCapture(t, c) then
-      val f = Var(Expr.fresh(param.name))
-      Lam(f, body.subst(Map(param.name -> f), Map.empty).subst(t - param.name, c))
-    else Lam(param, body.subst(t - param.name, c))
-      
-  protected def reconstruct(param: Var, newBody: Expr): BindingExpr = Lam(param, newBody)
+// Abstract base class for application constructs (Appl and Cont)
+abstract class Application(val head: Expr, val arg: Expr) extends Expr:
+  def freeNames = head.freeNames ++ arg.freeNames
+  def alphaEq(that: Expr, env: Map[Name, Name]) = that match
+    case other: Application if other.getClass == this.getClass =>
+      head.alphaEq(other.head, env) && arg.alphaEq(other.arg, env)
+    case _ => false
+  def subst(substMap: Map[Name, Expr]) = reconstruct(head.subst(substMap), arg.subst(substMap))
+  override def normalize() =
+    val normH = head.normalize()
+    val normA = arg.normalize()
+    val candidate = reconstruct(normH, normA)
+    val stepped = candidate.step
+    if !stepped.alphaEq(candidate) then stepped.normalize() else candidate
+    
+  protected def reconstruct(head: Expr, arg: Expr): Application
 
-case class Mu(param: Var, body: Expr) extends BindingExpr:
-  def pretty = s"μ${param.name}.${body.pretty}"
-  def freeContVars = body.freeContVars - param
-  
-  def subst(t: Map[String, Expr], c: Map[String, Expr]) =
-    if needsCapture(t, c) then
-      val f = Var(Expr.fresh(param.name))
-      Mu(f, body.subst(Map(param.name -> f), Map(param.name -> f)).subst(t, c - param.name))
-    else Mu(param, body.subst(t, c - param.name))
-      
-  protected def reconstruct(param: Var, newBody: Expr): BindingExpr = Mu(param, newBody)
-  
+case class Var(n: Name) extends Expr:
+  def pretty = n.name
+  def freeNames = Set(n)
+  def alphaEq(that: Expr, env: Map[Name, Name]) = that match
+    case Var(m) => env.getOrElse(n, n) == env.getOrElse(m, m)
+    case _ => false
+  def subst(substMap: Map[Name, Expr]) = substMap.getOrElse(n, this)
+
+case class Lam(override val param: TermVar, override val body: Expr) extends Binding(param, body):
+  def pretty = s"\u03bb${param.name}.${body.pretty}"
+  protected def freshParam() = TermVar(Expr.fresh(param.name))
+  protected def reconstruct(param: Name, body: Expr) = Lam(param.asInstanceOf[TermVar], body)
+  protected def reconstructWithFresh(fresh: Name, body: Expr) = Lam(fresh.asInstanceOf[TermVar], body)
+
+case class Mu(override val param: ContVar, override val body: Expr) extends Binding(param, body):
+  def pretty = s"\u03bc${param.name}.${body.pretty}"
+  protected def freshParam() = ContVar(Expr.fresh(param.name))
+  protected def reconstruct(param: Name, body: Expr) = Mu(param.asInstanceOf[ContVar], body)
+  protected def reconstructWithFresh(fresh: Name, body: Expr) = Mu(fresh.asInstanceOf[ContVar], body)
   override def reduction = body match
-    case Cont(Var(c), x) if param.name == c => Some(x)  // μα.[α]M → M (main mu reduction)
+    case Cont(Var(ContVar(c)), x) if param.name == c => Some(x)
     case _ => None
 
-case class Appl(head: Expr, arg: Expr) extends BinaryExpr:
-  def pretty = {
-    val headStr = head match {
-      case _: Lam | _: Mu => s"(${head.pretty})"
-      case _ => head.pretty
-    }
-    val argStr = arg match {
-      case _: Appl | _: Lam | _: Mu => s"(${arg.pretty})"
-      case _ => arg.pretty
-    }
-    s"$headStr $argStr"
-  }
+case class Appl(override val head: Expr, override val arg: Expr) extends Application(head, arg):
+  def pretty = head match
+    case _: Lam | _: Mu => s"(${head.pretty}) ${argPretty}"
+    case _ => s"${head.pretty} ${argPretty}"
   
-  def freeContVars = head match
-    case Var(n) => Set(Var(n)) ++ arg.freeContVars
-    case _ => head.freeContVars ++ arg.freeContVars
+  private def argPretty = arg match
+    case _: Appl => s"(${arg.pretty})"  // Parenthesize nested applications 
+    case _ => arg.pretty
     
-  def subst(t: Map[String, Expr], c: Map[String, Expr]) = Appl(head.subst(t, c), arg.subst(t, c))
-  
-  protected def reconstruct(newHead: Expr, newArg: Expr): BinaryExpr = Appl(newHead, newArg)
-  
-  override def reduction = head match
-    case Lam(x, b) => Some(b.betaReduce(x, arg))
-    case _ => None
+  protected def reconstruct(head: Expr, arg: Expr) = Appl(head, arg)
+  override def step = head match
+    case Lam(x, b) => b.subst(Map(x -> arg))  // Beta reduction
+    case _ =>
+      val newHead = head.step
+      if !newHead.alphaEq(head) then Appl(newHead, arg) else this
 
-case class Cont(head: Expr, arg: Expr) extends BinaryExpr:
-  def pretty = {
-    val argStr = arg match {
-      case _: Appl | _: Lam | _: Mu => s"(${arg.pretty})"
-      case _ => arg.pretty
-    }
-    s"[${head.pretty}] $argStr"
-  }
-  
-  def freeContVars = head match
-    case Var(n) => Set(Var(n)) ++ arg.freeContVars
-    case _ => head.freeContVars ++ arg.freeContVars
-    
-  def subst(t: Map[String, Expr], c: Map[String, Expr]) = head match
-    case Var(n) if c.contains(n) => Cont(c(n).subst(t, c), arg.subst(t, c))
-    case _ => Cont(head.subst(t, c), arg.subst(t, c))
-    
-  protected def reconstruct(newHead: Expr, newArg: Expr): BinaryExpr = Cont(newHead, newArg)
-  
+case class Cont(override val head: Expr, override val arg: Expr) extends Application(head, arg):
+  def pretty = arg match
+    case _: Lam | _: Mu => s"[${head.pretty}] (${arg.pretty})"
+    case _ => s"[${head.pretty}] ${arg.pretty}"
+  protected def reconstruct(head: Expr, arg: Expr) = Cont(head, arg)
   override def reduction = (head, arg) match
-    case (Var(a2), Mu(Var(a1), b)) => 
-      if a1 == a2 then Some(b)  // [α](μα.c) → c
-      else Some(b.subst(Map.empty, Map(a1 -> Var(a2))))  // [α](μβ.c) → c[α/β] (structural reduction)
+    case (Var(ContVar(a2)), Mu(ContVar(a1), b)) =>
+      if a1 == a2 then Some(b)
+      else Some(b.subst(Map(ContVar(a1) -> Var(ContVar(a2)))))
     case _ => None
+  override def step = reduction.getOrElse {
+    val newHead = head.step
+    if !newHead.alphaEq(head) then Cont(newHead, arg) else this
+  }
