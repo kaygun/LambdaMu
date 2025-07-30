@@ -84,31 +84,28 @@ object REPL extends App:
     var current = expr
     var stepCount = 0
     
-    println(s"$stepCount: ${current.pretty}")
+    println(s"[$stepCount]: ${current.pretty}")
     
     while stepCount < maxSteps do
       val next = current.step
+      stepCount += 1
       if next.alphaEq(current) then
         // No more single steps possible, try normalization if enabled
         if normalizeResults then
           val normalized = current.normalize()
           if !normalized.alphaEq(current) then
             println(s"[$stepCount]: ${normalized.pretty}")
-          else
-            println("(already in normal form)")
         else
           println("(no more single steps available)")
         return
       else
-        stepCount += 1
         current = next
         println(s"[$stepCount]: ${current.pretty}")
     
     println(s"Stopped after $maxSteps steps (may not be in normal form)")
     if normalizeResults then
-      println("Attempting full normalization...")
       val normalized = current.normalize()
-      println(s"Final (normalized): ${normalized.pretty}")
+      println(s"${normalized.pretty}")
 
   // Alpha equivalence checking
   private def checkAlphaEquivalence(line: String): Unit =
